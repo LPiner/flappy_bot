@@ -7,6 +7,11 @@ import time
 import matplotlib.pyplot as plt
 import numpy
 from matplotlib.pyplot import plot, draw, show
+from structlog import get_logger
+from typing import List
+
+
+logger = get_logger()
 
 
 
@@ -14,7 +19,64 @@ game = Game()
 game.start_game()
 #count = 1
 while True:
-    game._grab_screen()
+    start_time = time.time()
+    screen = game._grab_screen()
+
+    # Here are the areas that will kill us if we touch it.
+    danger_points, danger_mask = ImageProcessor.find_by_color(
+        cv2.blur(screen, (9, 9)),
+        upper_bound=numpy.array([70, 250, 250]),
+        lower_bound=numpy.array([40, 115, 115])
+    )
+
+    danger_points = danger_points.reshape((-1, 2))
+    # Array needs to be flipped from x, y to y, x
+    danger_points = numpy.flip(danger_points, (1,))
+
+    # sets are stupid fast.
+    danger_points = set(tuple(map(tuple, danger_points)))
+
+
+    def get_pipe_location() -> (int, int):
+        t = time.time()
+        width, height = danger_mask.shape[::-1]
+        pipe_start_x_pos = None
+        for y in range(25, 175, 10):
+            if pipe_start_x_pos:
+                break
+            for x in range(30, width, 5):
+                if (y, x) in danger_points:
+                    #screen[y][x] = (100, 0, 0)
+                    pipe_start_x_pos = x
+                    break
+
+        if not pipe_start_x_pos:
+            raise Exception
+
+        y_pos: List[int] = []
+        for y in range(25, 175, 2):
+            if (y, pipe_start_x_pos + 5) in danger_points:
+                screen[y][pipe_start_x_pos + 5] = (150, 0, 0)
+                y_pos.append(y)
+
+        for c, i in enumerate(y_pos):
+            if i == y_pos[-1]:
+                raise Exception
+
+            if y_pos[c+1] - i > 40:
+                return i, y_pos[c+1]
+        logger.debug("[get_pipe_location] Runtime.", runtime=time.time() - t)
+
+    try:
+        print(get_pipe_location())
+    except Exception:
+        pass
+
+
+    plt.cla()
+    plt.imshow(screen)
+    plt.pause(0.00001)
+    logger.debug("[__main__] Time for loop.", loop_time=time.time() - start_time)
 
 
 #ImageProcessor.find_match_with_features(screen, bird)

@@ -169,3 +169,14 @@ if __name__ == "__main__":
         count += 1
 
 
+
+"""
+2019-04-16 15:08.59 [__main__] Time for loop.      current_count=317 loop_time=0.039034366607666016
+2019-04-16 15:08.59 [_grab_screen] Exec time       runtime=0.019009828567504883
+2019-04-16 15:08.59 [find_match_with_template]     runtime=0.0
+2019-04-16 15:08.59 [find_match_with_template]     runtime=0.0010068416595458984
+2019-04-16 15:08.59 [find_by_color]                runtime=0.0
+2019-04-16 15:08.59 [find_by_color]                runtime=0.0010006427764892578
+2019-04-16 15:08.59 [__main__] Time for loop.      current_count=318 loop_time=0.02901768684387207
+
+"""
