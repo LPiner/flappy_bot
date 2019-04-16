@@ -1,5 +1,6 @@
 from selenium import webdriver
 from flappy_bot.models.game import Game
+from typing import List
 from flappy_bot.types.keys import Keys
 from flappy_bot.models.image_processor import ImageProcessor
 import cv2
@@ -11,15 +12,13 @@ from structlog import get_logger
 
 logger = get_logger(__name__)
 
-bird = cv2.imread("img/bird/bird_neutral.png", cv2.IMREAD_GRAYSCALE)
 
 if __name__ == "__main__":
     game = Game()
     game.start_game()
     game.input(Keys.SPACE)
+    screen_history = []
 
-    pipe_top = cv2.imread("img/top_pipe.png", cv2.IMREAD_GRAYSCALE)
-    pipe_bottom = cv2.imread("img/bottom_pipe.png", cv2.IMREAD_GRAYSCALE)
     restart_button = cv2.imread("img/restart.png", cv2.IMREAD_GRAYSCALE)
 
     count = 0
@@ -36,15 +35,13 @@ if __name__ == "__main__":
         grey_scale_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         save_screen = False
 
-
-        # Get all pipes that are on the screen.
-        pipe_tops = ImageProcessor.find_match_with_template(grey_scale_screen, pipe_top)
-
         # Check for the game over button.
         restart_button_search = ImageProcessor.find_match_with_template(grey_scale_screen, restart_button)
         game_over = False if restart_button_search[0].size == 0 else True
 
         if game_over:
+            for idx, c in enumerate(screen_history):
+                cv2.imwrite(f"tmp/{idx}_screen.png", c)
             # ded
             game.input(Keys.SPACE)
             game.input(Keys.SPACE)
@@ -54,8 +51,8 @@ if __name__ == "__main__":
         # Here are the areas that will kill us if we touch it.
         danger_points, danger_mask = ImageProcessor.find_by_color(
             cv2.blur(screen, (9, 9)),
-            upper_bound=numpy.array([70, 250, 250]),
-            lower_bound=numpy.array([40, 115, 115])
+            upper_bound=numpy.array([75, 255, 255]),
+            lower_bound=numpy.array([35, 90, 0])
         )
 
         # Find colors that only the bird is going to have.
@@ -85,20 +82,24 @@ if __name__ == "__main__":
 
         # Figure out what is below our bird
         lower_hitbox = []
-        lower_hitbox_y_range = range(int(bird_y), int(bird_y + bird_height / 2) + 15)
-        lower_hitbot_x_range = range(int(bird_x - bird_width / 2), int(bird_x + bird_width / 2 + 10))
+        lower_hitbox_y_range = range(int(bird_y), int(bird_y + bird_height / 2) + 13)
+        lower_hitbot_x_range = range(int(bird_x - bird_width / 2 - 5), int(bird_x + bird_width / 2 + 5))
         for y in lower_hitbox_y_range:
             for x in lower_hitbot_x_range:
-                lower_hitbox.append([y, x])
+                lower_hitbox.append((y, x))
             if y > lowest:
                 lowest = y
 
+        lower_hitbox = set(lower_hitbox)
+
         upper_hitbox = []
-        upper_hitbox_y_range = range(int(bird_y) - 35, int(bird_y+bird_height/2))
-        upper_hitbox_x_range = range(int(bird_x-bird_width/2) - 5, int(bird_x + bird_width/2 + 10))
+        upper_hitbox_y_range = range(int(bird_y) - 30, int(bird_y+bird_height/2))
+        upper_hitbox_x_range = range(int(bird_x-bird_width/2), int(bird_x + bird_width/2) + 5)
         for y in upper_hitbox_y_range:
             for x in upper_hitbox_x_range:
-                upper_hitbox.append([y, x])
+                upper_hitbox.append((y, x))
+
+        upper_hitbox = set(upper_hitbox)
 
         # Visually draw our lower hitbox.
         screen = cv2.rectangle(screen, (list(lower_hitbot_x_range)[0], list(lower_hitbox_y_range)[0]), (list(lower_hitbot_x_range)[-1], list(lower_hitbox_y_range)[-1]), (0, 0, 255), 1)
@@ -113,30 +114,51 @@ if __name__ == "__main__":
         danger_points = danger_points.reshape((-1, 2))
         # Array needs to be flipped from x, y to y, x
         danger_points = numpy.flip(danger_points, (1,))
-        # convert this to a python list cause I have legit no fucking idea whats going on.
-        danger_points = danger_points.tolist()
+        # sets are stupid fast.
+        danger_points = set(tuple(map(tuple, danger_points)))
 
-        # so this is really dumb but by checking that the x, y values exist in the range
-        # allowed by the hitbox we can confirm that the point could be a collision before
-        # actually checking. This method is way faster.
-        for point in danger_points:
-            if point[0] in upper_hitbox_y_range and point[1] in upper_hitbox_x_range:
-                if point in upper_hitbox:
-                    force_no_jump = True
-            elif point[0] in lower_hitbox_y_range and point[1] in lower_hitbot_x_range:
-                if point in lower_hitbox:
-                    should_jump = True
 
-        floor = 70
-        w, h = pipe_top.shape[::-1]
-        for (x, y) in zip(pipe_tops[1], pipe_tops[0]):
-            floor = y
-            break
 
-        target_height = floor + 70
+        def get_pipe_location() -> (int, int):
+            t = time.time()
+            width, height = danger_mask.shape[::-1]
+            pipe_start_x_pos = None
+            for y in range(10, 175, 10):
+                if pipe_start_x_pos:
+                    break
+                for x in range(40, width, 5):
+                    if (y, x) in danger_points:
+                        # screen[y][x] = (100, 0, 0)
+                        pipe_start_x_pos = x
+                        break
+
+            if not pipe_start_x_pos:
+                raise Exception
+
+            y_pos: List[int] = []
+            for y in range(10, 175, 2):
+                if (y, pipe_start_x_pos + 5) in danger_points:
+                    screen[y][pipe_start_x_pos + 5] = (150, 0, 0)
+                    y_pos.append(y)
+
+            for c, i in enumerate(y_pos):
+                if i == y_pos[-1]:
+                    raise Exception
+
+                if y_pos[c + 1] - i > 40:
+                    logger.debug("[get_pipe_location] Runtime.", runtime=time.time() - t, y1=i, y2=y_pos[c + 1])
+                    return i, y_pos[c + 1]
+
+        floor = 120
+        try:
+            top, bottom = get_pipe_location()
+            floor = bottom
+        except Exception as e:
+            print(e)
+            pass
+
+        target_height = floor
         screen = ImageProcessor.draw_line_on_image(screen, (50, target_height), (50+15, target_height))
-        #floor -= 75
-        #print(f"Setting floor at {target_height}")
 
         # if the x jumps forward too much then we know the detection has fucked up
 
@@ -152,16 +174,29 @@ if __name__ == "__main__":
         """
         # Bird takes about .25 seconds to hit the top of its jump.
         # This prevents jump spam
-        required_delay = .2
-        if should_jump or bird_y > target_height:
-            cv2.imwrite(f"tmp/{count}_screen.png", screen)
-            cv2.imwrite(f"tmp/{count}_screen_mask.png", danger_mask)
-            if force_no_jump:
-                logger.debug("[__main__] Not jumping due to obstacle above.")
-            elif time.time() - last_jump_at < required_delay:
-                logger.debug("[__main__] Not jumping due to time check.", last_jump_at=last_jump_at, current_wait_time=time.time()-last_jump_at, required_delay=required_delay)
-            else:
-                logger.debug("[__main__] Jumping")
+        required_delay = .22
+
+        if len(screen_history) > 30:
+            screen_history.pop(1)
+
+        screen_history.append(screen)
+        cv2.imwrite(f"tmp/{count}_screen.png", screen)
+        if time.time() - last_jump_at > required_delay:
+            lower_hitbox_triggered = False
+            upper_hitbox_triggered = False
+            for point in danger_points:
+                if point in upper_hitbox:
+                    upper_hitbox_triggered = True
+                if point in lower_hitbox:
+                    lower_hitbox_triggered = True
+                    break
+
+            if lower_hitbox_triggered:
+                game.input(Keys.SPACE)
+                last_jump_at = time.time()
+            elif upper_hitbox_triggered:
+                pass
+            elif bird_y > target_height:
                 game.input(Keys.SPACE)
                 last_jump_at = time.time()
 
